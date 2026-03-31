@@ -1,72 +1,192 @@
-### Objective
+# Banking API
 
-Your assignment is to build an internal API for a fake financial institution using Python and any framework  except Django and Litestar.
+Internal banking API built with FastAPI, PostgreSQL, and SQLAlchemy 2.0 async.
 
-### Brief
+## Features
 
-While modern banks have evolved to serve a plethora of functions, at their core, banks must provide certain basic features. Today, your task is to build the basic HTTP API for one of those banks! Imagine you are designing a backend API for bank employees. It could ultimately be consumed by multiple frontends (web, iOS, Android etc).
+- **Customers**: list (paginated), get by ID with accounts
+- **Accounts**: create with initial deposit (EUR), check balance
+- **Transfers**: between accounts, idempotent via `reference`, balance snapshots
+- **Transfer history**: paginated, shows direction + counterparty + balance after each transfer
+- **`X-Requested-By` header**: tracks who made each request (audit trail)
+- **Concurrency safe**: row-level locks prevent double-spend
+- **Money**: `NUMERIC(12,2)` in Postgres, `Decimal` in Python — never floats
 
-### Important
-We do not expect you to work more than 4 hours on this case challenge and we acknowledge not everything can be implemented in a production ready manner. You can choose where to use a mock/stub vs. where you focus on the implementation. If you have to make compromises, please list in your documentation what needs to be done to make it production ready. 
+## Prerequisites
 
-### Tasks
+[Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running.
 
-- Implement assignment using:
-  - Language: **Python**
-  - Framework: **any framework except Django and Litestar** 
-- There should be API routes that allow them to:
-  - Create a new bank account for a customer, with an initial deposit amount. A
-    single customer may have multiple bank accounts.
-  - Transfer amounts between any two accounts, including those owned by
-    different customers.
-  - Retrieve balances for a given account.
-  - Retrieve transfer history for a given account.
-- Write tests for your business logic
-- Add documentation what needs to be done before putting your solution into production
+## Getting started
 
-Feel free to pre-populate your customers with the following:
+```bash
+cd banking-api-rdxvmq
 
-```json
-[
-  {
-    "id": 1,
-    "name": "Arisha Barron"
-  },
-  {
-    "id": 2,
-    "name": "Branden Gibson"
-  },
-  {
-    "id": 3,
-    "name": "Rhonda Church"
-  },
-  {
-    "id": 4,
-    "name": "Georgina Hazel"
-  }
-]
+# Create your local .env from the template
+cp .env.example .env
+
+# Start everything
+docker compose up --build
 ```
 
-You are expected to design any other required models and routes for your API.
+Wait for `Uvicorn running on http://localhost:8000`, then open:
 
-### Evaluation Criteria
+- **Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **Health check**: [http://localhost:8000/health](http://localhost:8000/health)
 
-- **Python** best practices
-- Completeness: did you complete the features?
-- Correctness: does the functionality act in sensible, thought-out ways?
-- Maintainability: is it written in a clean, maintainable way?
-- Production readiness: is there a clear path towards taking the prototype into production?
-- Testing: 
-   - Is the system adequately tested?
-   - Can the application be installed and tested out of the box by the reviewer?
-- Documentation:
-   - is the API well-documented?
-   - are design choices well-explained?
+To stop:
 
-### CodeSubmit
+```bash
+docker compose down -v
+```
 
-Please organize, design, test and document your code as if it were going into production - then push your changes to the master branch. After you have pushed your code, you may submit the assignment on the assignment page.
+## Seeded customers
 
-All the best and happy coding,
+4 customers are created on startup:
 
-The Entrix Team
+| ID | Name            |
+|----|-----------------|
+| 1  | Arisha Barron   |
+| 2  | Branden Gibson  |
+| 3  | Rhonda Church   |
+| 4  | Georgina Hazel  |
+
+## Authentication
+
+Every endpoint (except `/health`) requires two headers:
+
+| Header           | Description                          | Example              |
+|------------------|--------------------------------------|----------------------|
+| `X-API-Key`      | API key (placeholder for OAuth/JWT)  | `dev-internal-key`   |
+| `X-Requested-By` | Who is making the request            | `employee:jane.doe`  |
+
+## API endpoints
+
+### `GET /customers?page=1&max_size=20`
+
+List customers (paginated).
+
+```bash
+curl -H 'X-API-Key: dev-internal-key' -H 'X-Requested-By: jane' \
+  'http://localhost:8000/customers?page=1&max_size=10'
+```
+
+### `GET /customers/{id}`
+
+Customer detail with their accounts.
+
+```bash
+curl -H 'X-API-Key: dev-internal-key' -H 'X-Requested-By: jane' \
+  http://localhost:8000/customers/1
+```
+
+### `POST /customers/{id}/accounts`
+
+Create an account with an initial deposit.
+
+```bash
+curl -X POST http://localhost:8000/customers/1/accounts \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: dev-internal-key' \
+  -H 'X-Requested-By: jane' \
+  -d '{"initial_deposit": "1000.00"}'
+```
+
+### `GET /accounts/{id}/balance`
+
+```bash
+curl -H 'X-API-Key: dev-internal-key' -H 'X-Requested-By: jane' \
+  http://localhost:8000/accounts/1/balance
+```
+
+### `POST /transfers`
+
+Transfer money. `reference` is an idempotency key — same reference = same transfer returned.
+
+```bash
+curl -X POST http://localhost:8000/transfers \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: dev-internal-key' \
+  -H 'X-Requested-By: jane' \
+  -d '{"from_account_id": 1, "to_account_id": 2, "amount": "25.50", "reference": "rent-march"}'
+```
+
+### `GET /accounts/{id}/transfers?page=1&max_size=20`
+
+Transfer history with direction, counterparty info, and balance after each transaction.
+
+```bash
+curl -H 'X-API-Key: dev-internal-key' -H 'X-Requested-By: jane' \
+  'http://localhost:8000/accounts/1/transfers?page=1&max_size=10'
+```
+
+### `GET /health`
+
+No auth required.
+
+## Running tests
+
+Tests use `.env.test` (committed to the repo — safe, only local Docker credentials).
+
+```bash
+docker compose run --rm app pytest -q
+```
+
+## Linting
+
+```bash
+docker compose run --rm app ruff check .
+```
+
+## Error responses
+
+| Status | Error key                | When                                  |
+|--------|--------------------------|---------------------------------------|
+| 400    | `bad_request`            | Missing required header               |
+| 401    | `unauthorized`           | Invalid or missing API key            |
+| 404    | `not_found`              | Customer or account doesn't exist     |
+| 409    | `insufficient_funds`     | Not enough balance for transfer       |
+| 422    | `validation_error`       | Invalid request body (with `errors[]`)|
+| 422    | `business_rule_violation`| e.g. self-transfer                    |
+| 500    | `server_error`           | Unexpected database or server error   |
+
+## Environment & secrets
+
+| File           | Committed? | Purpose                                      |
+|----------------|------------|----------------------------------------------|
+| `.env.example` | Yes        | Template — `cp .env.example .env` to start   |
+| `.env`         | **No**     | Your local secrets (in `.gitignore`)         |
+| `.env.test`    | Yes        | Test config (safe, local Docker only)        |
+
+In production, use a secrets manager (AWS Secrets Manager, Vault, etc.) instead of `.env` files.
+
+## CI
+
+GitHub Actions pipeline in `.github/workflows/ci.yml` — runs `ruff check` + `pytest` against a Postgres service container on every push/PR to `main`.
+
+**Setup required:** add these repository secrets in GitHub → Settings → Secrets and variables → Actions:
+
+| Secret                | Example value  |
+|-----------------------|----------------|
+| `POSTGRES_DB_CI`      | `banking`      |
+| `POSTGRES_USER_CI`    | `banking`      |
+| `POSTGRES_PASSWORD_CI`| (TBD)          |
+| `POSTGRES_HOST_CI`    | `localhost`    |
+| `API_KEY_CI`          | `test-key`     |
+
+No credentials are hardcoded in the workflow file.
+
+## Architecture
+
+```
+api/routes/     → HTTP endpoints (thin, delegate to service)
+services/       → Business logic (validation, transfers, idempotency)
+repositories/   → Database queries (SELECT, INSERT, locking)
+models/         → SQLAlchemy ORM (Customer, Account, Transfer)
+schemas/        → Pydantic request/response models
+scripts/        → init_db, seed_customers
+core/           → Config (.env), auth, logging
+```
+
+## Road to production
+
+See [`docs/production-readiness.md`](docs/production-readiness.md) — covers OAuth/JWT, PSD2 identity verification (photoTAN, SantanderSign), full account schema (DOB, address, credit score, income), KYC/AML, audit logging, multi-currency with FX rates, rate limiting, observability, GDPR, and CI/CD.
